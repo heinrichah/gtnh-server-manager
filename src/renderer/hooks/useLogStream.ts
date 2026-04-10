@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { logsApi } from '../ipc/client'
 import type { LogChunk } from '@shared/types'
 
-const MAX_LINES = 2000
+const MAX_LINES = 300
+const FLUSH_INTERVAL_MS = 150
 
 // Module-level buffer so lines survive navigating away and back to the Logs tab
 const lineBuffers = new Map<string, LogChunk[]>()
@@ -12,43 +13,57 @@ function getBuffer(serverId: string): LogChunk[] {
   return lineBuffers.get(serverId)!
 }
 
-function appendToBuffer(serverId: string, chunk: LogChunk): LogChunk[] {
+function pushToBuffer(serverId: string, chunk: LogChunk) {
   const buf = getBuffer(serverId)
   buf.push(chunk)
   if (buf.length > MAX_LINES) buf.splice(0, buf.length - MAX_LINES)
-  return [...buf]
 }
 
 export function useLogStream(serverId: string | null) {
   const [lines, setLines] = useState<LogChunk[]>(serverId ? getBuffer(serverId) : [])
   const cleanupListenerRef = useRef<(() => void) | null>(null)
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingRef = useRef(false)
+
+  function scheduleFlush(id: string) {
+    if (flushTimerRef.current) return
+    flushTimerRef.current = setTimeout(() => {
+      flushTimerRef.current = null
+      pendingRef.current = false
+      setLines([...getBuffer(id)])
+    }, FLUSH_INTERVAL_MS)
+  }
 
   useEffect(() => {
     if (!serverId) return
 
-    // Restore buffered lines from before we navigated away
-    setLines(getBuffer(serverId))
+    setLines([...getBuffer(serverId)])
 
-    // Register IPC listener before starting so no chunks are missed
     cleanupListenerRef.current = logsApi.onChunk((id, chunk) => {
       if (id !== serverId) return
-      setLines(appendToBuffer(serverId, chunk))
+      pushToBuffer(serverId, chunk)
+      pendingRef.current = true
+      scheduleFlush(serverId)
     })
 
-    // Start the tail stream (no-op if already running in main process)
     logsApi.start(serverId).catch(console.error)
 
     return () => {
-      // Unregister the IPC listener when navigating away, but keep the
-      // tail running in the main process — stopping and restarting it
-      // would re-deliver the last 200 lines and duplicate the buffer.
       cleanupListenerRef.current?.()
       cleanupListenerRef.current = null
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current)
+        flushTimerRef.current = null
+      }
     }
   }, [serverId])
 
   function clearBuffer() {
     if (serverId) lineBuffers.set(serverId, [])
+    if (flushTimerRef.current) {
+      clearTimeout(flushTimerRef.current)
+      flushTimerRef.current = null
+    }
     setLines([])
   }
 

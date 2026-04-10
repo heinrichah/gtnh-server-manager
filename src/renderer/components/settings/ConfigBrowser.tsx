@@ -1,14 +1,16 @@
 import { useState, useEffect } from 'react'
 import { ChevronRight, ChevronDown, Folder, FolderOpen, FileText, Save, Loader2, RefreshCw } from 'lucide-react'
 import { configsApi } from '../../ipc/client'
+import { CfgEditor } from './CfgEditor'
 import type { ConfigDirEntry } from '@shared/types'
 import { cn } from '../../lib/utils'
 
 interface ConfigBrowserProps {
   serverId: string
+  isStopped: boolean
 }
 
-const TEXT_EXTENSIONS = ['.cfg', '.properties', '.json', '.txt', '.sh', '.toml', '.yaml', '.yml', '.conf', '.xml', '.log']
+const TEXT_EXTENSIONS = ['.cfg', '.json', '.txt', '.sh', '.toml', '.yaml', '.yml', '.conf', '.xml', '.log']
 
 function isEditable(name: string) {
   const lower = name.toLowerCase()
@@ -16,10 +18,9 @@ function isEditable(name: string) {
 }
 
 // Predefined top-level directories to expose in the tree
-const TREE_ROOTS: { label: string; path: string }[] = [
-  { label: 'Root', path: '' },
-  { label: 'config', path: 'config' },
-  { label: 'serverutilities', path: 'serverutilities' },
+const TREE_ROOTS: { label: string; path: string; fileFilter?: (name: string) => boolean; dirFilter?: (name: string) => boolean }[] = [
+  { label: 'config', path: 'config', dirFilter: (name) => name.toLowerCase() !== 'properties' },
+  { label: 'serverutilities', path: 'serverutilities', dirFilter: (name) => name.toLowerCase() !== 'properties' },
 ]
 
 // ---- File node ----
@@ -59,9 +60,11 @@ interface DirNodeProps {
   selectedPath: string | null
   onSelect: (path: string) => void
   defaultExpanded?: boolean
+  fileFilter?: (name: string) => boolean
+  dirFilter?: (name: string) => boolean
 }
 
-function DirNode({ serverId, name, path, depth, selectedPath, onSelect, defaultExpanded }: DirNodeProps) {
+function DirNode({ serverId, name, path, depth, selectedPath, onSelect, defaultExpanded, fileFilter, dirFilter }: DirNodeProps) {
   const [expanded, setExpanded] = useState(defaultExpanded ?? false)
   const [children, setChildren] = useState<ConfigDirEntry[] | null>(null)
   const [loading, setLoading] = useState(false)
@@ -73,7 +76,16 @@ function DirNode({ serverId, name, path, depth, selectedPath, onSelect, defaultE
         .listDir(serverId, path)
         .then((entries) => {
           setChildren(
-            entries.filter((e) => e.isDir || isEditable(e.name))
+            entries
+              .filter((e) => {
+                if (e.isDir) return !fileFilter && (!dirFilter || dirFilter(e.name))
+                if (fileFilter) return fileFilter(e.name)
+                return isEditable(e.name)
+              })
+              .sort((a, b) => {
+                if (a.isDir !== b.isDir) return a.isDir ? -1 : 1
+                return a.name.localeCompare(b.name)
+              })
           )
         })
         .catch(() => setChildren([]))
@@ -121,6 +133,8 @@ function DirNode({ serverId, name, path, depth, selectedPath, onSelect, defaultE
                 depth={depth + 1}
                 selectedPath={selectedPath}
                 onSelect={onSelect}
+                fileFilter={fileFilter}
+                dirFilter={dirFilter}
               />
             ) : (
               <FileNode
@@ -139,9 +153,13 @@ function DirNode({ serverId, name, path, depth, selectedPath, onSelect, defaultE
   )
 }
 
+function isCfgFile(path: string) {
+  return path.toLowerCase().endsWith('.cfg')
+}
+
 // ---- Main component ----
 
-export function ConfigBrowser({ serverId }: ConfigBrowserProps) {
+export function ConfigBrowser({ serverId, isStopped }: ConfigBrowserProps) {
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [fileContent, setFileContent] = useState('')
   const [editedContent, setEditedContent] = useState('')
@@ -152,10 +170,8 @@ export function ConfigBrowser({ serverId }: ConfigBrowserProps) {
   const isDirty = editedContent !== fileContent
 
   async function openFile(path: string) {
-    if (isDirty && selectedPath) {
-      // Simple guard — could be a confirm dialog but keep it lightweight
-    }
     setSelectedPath(path)
+    if (isCfgFile(path)) return  // CfgEditor manages its own state
     setLoadingFile(true)
     setFileError(null)
     try {
@@ -183,10 +199,6 @@ export function ConfigBrowser({ serverId }: ConfigBrowserProps) {
     }
   }
 
-  function handleReload() {
-    if (selectedPath) openFile(selectedPath)
-  }
-
   return (
     <div className="flex h-full overflow-hidden">
       {/* Tree panel */}
@@ -201,20 +213,32 @@ export function ConfigBrowser({ serverId }: ConfigBrowserProps) {
             selectedPath={selectedPath}
             onSelect={openFile}
             defaultExpanded={false}
+            fileFilter={root.fileFilter}
+            dirFilter={root.dirFilter}
           />
         ))}
       </div>
 
       {/* Editor panel */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {selectedPath ? (
+        {!selectedPath && (
+          <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
+            Select a file from the tree to edit it
+          </div>
+        )}
+
+        {selectedPath && isCfgFile(selectedPath) && (
+          <CfgEditor key={selectedPath} serverId={serverId} filePath={selectedPath} isStopped={isStopped} />
+        )}
+
+        {selectedPath && !isCfgFile(selectedPath) && (
           <>
-            {/* Toolbar */}
             <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-card shrink-0">
               <span className="text-xs font-mono text-muted-foreground truncate flex-1">{selectedPath}</span>
               {isDirty && <span className="text-xs text-yellow-400 shrink-0">unsaved</span>}
+              {!isStopped && <span className="text-xs text-muted-foreground/50 shrink-0">stop server to save</span>}
               <button
-                onClick={handleReload}
+                onClick={() => openFile(selectedPath)}
                 disabled={loadingFile || saving}
                 className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent disabled:opacity-40"
                 title="Reload from server"
@@ -223,7 +247,7 @@ export function ConfigBrowser({ serverId }: ConfigBrowserProps) {
               </button>
               <button
                 onClick={handleSave}
-                disabled={!isDirty || saving || loadingFile}
+                disabled={!isDirty || saving || loadingFile || !isStopped}
                 className="flex items-center gap-1.5 px-3 py-1 rounded bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 disabled:opacity-50"
               >
                 {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
@@ -249,10 +273,6 @@ export function ConfigBrowser({ serverId }: ConfigBrowserProps) {
               />
             )}
           </>
-        ) : (
-          <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
-            Select a file from the tree to edit it
-          </div>
         )}
       </div>
     </div>

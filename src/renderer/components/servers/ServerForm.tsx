@@ -23,7 +23,10 @@ export function ServerForm({ onClose, onSave, existing }: ServerFormProps) {
   const [password, setPassword] = useState('')
   const [privateKeyPath, setPrivateKeyPath] = useState(existing?.ssh.privateKeyPath ?? '')
   const [passphrase, setPassphrase] = useState('')
+  const [osType, setOsType] = useState<'ubuntu' | 'debian'>(existing?.osType ?? 'ubuntu')
   const [installPath, setInstallPath] = useState(existing?.installPath ?? '/root/GTNH-Server')
+  const [memoryGb, setMemoryGb] = useState(String(existing?.memoryGb ?? 6))
+  const [githubToken, setGithubToken] = useState('')
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null)
   const [saving, setSaving] = useState(false)
@@ -68,8 +71,11 @@ export function ServerForm({ onClose, onSave, existing }: ServerFormProps) {
     try {
       const data = {
         displayName: displayName || host,
+        osType,
         ssh: buildSshData(),
         installPath,
+        memoryGb: parseInt(memoryGb, 10) || 6,
+        ...(githubToken ? { githubToken } : {}),
       }
       const server = existing
         ? await serversApi.update(existing.id, data)
@@ -138,6 +144,18 @@ export function ServerForm({ onClose, onSave, existing }: ServerFormProps) {
             />
           </Field>
 
+          <Field label="OS">
+            <select
+              value={osType}
+              onChange={(e) => setOsType(e.target.value as 'ubuntu' | 'debian')}
+              disabled={busy}
+              className="input"
+            >
+              <option value="ubuntu">Ubuntu</option>
+              <option value="debian">Debian</option>
+            </select>
+          </Field>
+
           <Field label="Auth Method">
             <select
               value={authMethod}
@@ -189,6 +207,28 @@ export function ServerForm({ onClose, onSave, existing }: ServerFormProps) {
               value={installPath}
               onChange={(e) => setInstallPath(e.target.value)}
               placeholder="/root/GTNH-Server"
+              disabled={busy}
+              className="input"
+            />
+          </Field>
+
+          <Field label="Server Memory (GB)">
+            <input
+              type="number"
+              min={1}
+              value={memoryGb}
+              onChange={(e) => setMemoryGb(e.target.value)}
+              disabled={busy}
+              className="input"
+            />
+          </Field>
+
+          <Field label="GitHub Token (optional — required for non-release/beta (daily) versions)">
+            <input
+              type="password"
+              value={githubToken}
+              onChange={(e) => setGithubToken(e.target.value)}
+              placeholder={existing?.githubToken ? '(leave blank to keep current)' : ''}
               disabled={busy}
               className="input"
             />

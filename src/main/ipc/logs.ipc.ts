@@ -1,8 +1,8 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { NodeSSH } from 'node-ssh'
 import { IPC } from '../../shared/types'
-import type { LogChunk, SshLogEntry } from '../../shared/types'
-import { sshService, sshEvents } from '../services/ssh.service'
+import type { LogChunk } from '../../shared/types'
+import { sshService } from '../services/ssh.service'
 import { SCREEN_SESSION, SCREEN_LOG } from '../services/screen.service'
 import { getServer } from '../store/store'
 
@@ -19,13 +19,6 @@ export function disposeAllLogConnections() {
 }
 
 export function registerLogsHandlers(win: BrowserWindow) {
-  // Forward every SSH command completion to the renderer
-  sshEvents.on('command', (entry: SshLogEntry) => {
-    if (!win.isDestroyed()) {
-      win.webContents.send(IPC.SSH_LOG, entry.serverId, entry)
-    }
-  })
-
   ipcMain.handle(IPC.LOGS_START, async (_event, serverId: string) => {
     // If a stream is already active for this server, do nothing
     if (logConnections.has(serverId)) return
@@ -42,12 +35,12 @@ export function registerLogsHandlers(win: BrowserWindow) {
     logConnections.set(serverId, ssh)
 
     // Enable screen session logging in case the server was started without -L,
-    // then follow the log file from the beginning (-n +1).
+    // then tail only the last 200 lines of the existing file before following new output.
     // tail -F (capital F) retries if the file doesn't exist yet.
     const cmd = [
       `screen -S ${SCREEN_SESSION} -X logfile ${SCREEN_LOG} 2>/dev/null`,
       `screen -S ${SCREEN_SESSION} -X log on 2>/dev/null`,
-      `tail -n +1 -F ${SCREEN_LOG} 2>/dev/null`,
+      `tail -n 200 -F ${SCREEN_LOG} 2>/dev/null`,
     ].join('; ')
 
     ssh.execCommand(cmd, {

@@ -6,6 +6,9 @@ import { registerSettingsHandlers } from './ipc/settings.ipc'
 import { registerInstallHandlers } from './ipc/install.ipc'
 import { registerLogsHandlers, disposeAllLogConnections } from './ipc/logs.ipc'
 import { registerConfigsHandlers } from './ipc/configs.ipc'
+import { registerGithubHandlers } from './ipc/github.ipc'
+import { registerUpdateHandlers } from './ipc/update.ipc'
+import { registerModsDropinHandlers } from './ipc/modsDropin.ipc'
 import { sshService } from './services/ssh.service'
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
@@ -30,7 +33,6 @@ function createWindow() {
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173')
-    mainWindow.webContents.openDevTools()
   } else {
     mainWindow.loadFile(path.join(__dirname, '../../renderer/index.html'))
   }
@@ -52,6 +54,9 @@ app.whenReady().then(() => {
   registerInstallHandlers(win)
   registerLogsHandlers(win)
   registerConfigsHandlers()
+  registerGithubHandlers()
+  registerUpdateHandlers(win)
+  registerModsDropinHandlers()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

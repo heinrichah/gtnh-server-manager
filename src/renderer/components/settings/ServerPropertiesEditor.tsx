@@ -4,6 +4,7 @@ import { configsApi } from '../../ipc/client'
 
 interface ServerPropertiesEditorProps {
   serverId: string
+  isStopped: boolean
 }
 
 type PropLine =
@@ -27,7 +28,7 @@ function serializeLines(lines: PropLine[]): string {
     .join('\n')
 }
 
-export function ServerPropertiesEditor({ serverId }: ServerPropertiesEditorProps) {
+export function ServerPropertiesEditor({ serverId, isStopped }: ServerPropertiesEditorProps) {
   const [lines, setLines] = useState<PropLine[]>([])
   const [savedLines, setSavedLines] = useState<PropLine[]>([])
   const [loading, setLoading] = useState(true)
@@ -62,7 +63,16 @@ export function ServerPropertiesEditor({ serverId }: ServerPropertiesEditorProps
     setSaving(true)
     setError(null)
     try {
-      await configsApi.write(serverId, 'server.properties', serializeLines(lines))
+      const content = serializeLines(lines)
+      const savedMap = new Map(
+        savedLines.filter((l): l is Extract<PropLine, { type: 'property' }> => l.type === 'property')
+          .map(l => [l.key, l.value])
+      )
+      const changedFields: Record<string, string> = {}
+      for (const l of lines) {
+        if (l.type === 'property' && savedMap.get(l.key) !== l.value) changedFields[l.key] = l.value
+      }
+      await configsApi.write(serverId, 'server.properties', content, changedFields)
       setSavedLines(lines)
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err))
@@ -116,6 +126,7 @@ export function ServerPropertiesEditor({ serverId }: ServerPropertiesEditorProps
         </div>
         <span className="text-xs text-muted-foreground shrink-0">{properties.length} shown</span>
         {isDirty && <span className="text-xs text-yellow-400 shrink-0">unsaved</span>}
+        {!isStopped && <span className="text-xs text-muted-foreground/50 shrink-0">stop server to save</span>}
         <button
           onClick={load}
           disabled={loading || saving}
@@ -126,7 +137,7 @@ export function ServerPropertiesEditor({ serverId }: ServerPropertiesEditorProps
         </button>
         <button
           onClick={handleSave}
-          disabled={!isDirty || saving}
+          disabled={!isDirty || saving || !isStopped}
           className="flex items-center gap-1.5 px-3 py-1 rounded bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 disabled:opacity-50"
         >
           {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}

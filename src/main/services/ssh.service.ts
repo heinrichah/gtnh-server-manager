@@ -1,10 +1,6 @@
-import { EventEmitter } from 'events'
 import { NodeSSH } from 'node-ssh'
-import type { ServerConfig, SshLogEntry } from '../../shared/types'
+import type { ServerConfig } from '../../shared/types'
 import { getServer } from '../store/store'
-
-// Emits 'command' with SshLogEntry whenever executeCommand completes
-export const sshEvents = new EventEmitter()
 
 export interface ExecResult {
   stdout: string
@@ -55,20 +51,10 @@ async function getConnection(serverId: string): Promise<NodeSSH> {
  * with a fresh connection — this handles silently broken TCP sessions.
  */
 async function executeCommand(serverId: string, command: string): Promise<ExecResult> {
-  const t0 = Date.now()
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const ssh = await getConnection(serverId)
       const result = await ssh.execCommand(command)
-      const entry: SshLogEntry = {
-        timestamp: new Date().toISOString(),
-        serverId,
-        command,
-        exitCode: result.code ?? 0,
-        durationMs: Date.now() - t0,
-        stderr: result.stderr || undefined,
-      }
-      sshEvents.emit('command', entry)
       return {
         stdout: result.stdout,
         stderr: result.stderr,
@@ -79,21 +65,26 @@ async function executeCommand(serverId: string, command: string): Promise<ExecRe
         // Drop the stale connection and retry once with a fresh one
         await disconnect(serverId)
       } else {
-        const entry: SshLogEntry = {
-          timestamp: new Date().toISOString(),
-          serverId,
-          command,
-          exitCode: -1,
-          durationMs: Date.now() - t0,
-          stderr: err instanceof Error ? err.message : String(err),
-        }
-        sshEvents.emit('command', entry)
         throw err
       }
     }
   }
   // Unreachable but satisfies TypeScript
   throw new Error('executeCommand: unexpected state')
+}
+
+/** Execute a command and call onData for each chunk of output as it arrives. Returns ExecResult on completion. */
+async function executeCommandStreaming(
+  serverId: string,
+  command: string,
+  onData: (data: string) => void
+): Promise<ExecResult> {
+  const ssh = await getConnection(serverId)
+  const result = await ssh.execCommand(command, {
+    onStdout: (chunk) => onData(chunk.toString()),
+    onStderr: (chunk) => onData(chunk.toString()),
+  })
+  return { stdout: result.stdout, stderr: result.stderr, code: result.code ?? 0 }
 }
 
 // Stream command output line by line
@@ -170,6 +161,7 @@ async function disconnectAll(): Promise<void> {
 export const sshService = {
   getConnection,
   executeCommand,
+  executeCommandStreaming,
   streamCommand,
   uploadText,
   downloadText,

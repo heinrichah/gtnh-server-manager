@@ -4,6 +4,7 @@ import type { ConfigDirEntry } from '../../shared/types'
 import { sshService } from '../services/ssh.service'
 import { serverFilesPath } from '../services/screen.service'
 import { getServer } from '../store/store'
+import { recordChange, getState, removeChange, reapplyChanges } from '../services/configTracker.service'
 
 export function registerConfigsHandlers() {
   ipcMain.handle(IPC.CONFIGS_LIST_DIR, async (_event, serverId: string, relPath: string) => {
@@ -35,11 +36,26 @@ export function registerConfigsHandlers() {
     return sshService.downloadText(serverId, fullPath)
   })
 
-  ipcMain.handle(IPC.CONFIGS_WRITE, async (_event, serverId: string, relPath: string, content: string) => {
+  ipcMain.handle(IPC.CONFIGS_WRITE, async (_event, serverId: string, relPath: string, content: string, changedFields?: Record<string, string>) => {
     const config = getServer(serverId)
     if (!config) throw new Error(`Server ${serverId} not found`)
 
     const fullPath = `${serverFilesPath(config.installPath)}/${relPath}`
     await sshService.uploadText(serverId, fullPath, content)
+    if (changedFields && Object.keys(changedFields).length > 0) {
+      recordChange(serverId, `server-files/${relPath}`, changedFields).catch(console.error)
+    }
+  })
+
+  ipcMain.handle(IPC.TRACKER_READ, async (_event, serverId: string) => {
+    return getState(serverId)
+  })
+
+  ipcMain.handle(IPC.TRACKER_REMOVE, async (_event, serverId: string, relPath: string) => {
+    return removeChange(serverId, relPath)
+  })
+
+  ipcMain.handle(IPC.TRACKER_REAPPLY, async (_event, serverId: string, relPaths: string[]) => {
+    return reapplyChanges(serverId, relPaths)
   })
 }

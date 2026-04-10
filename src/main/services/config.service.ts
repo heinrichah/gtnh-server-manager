@@ -12,7 +12,7 @@ import {
   setSimpleValue,
   getMemoryFromScript,
   setMemoryInScript,
-} from '../utils/cfg-parser'
+} from '../../shared/cfg-parser'
 
 function serverPaths(installPath: string) {
   return {
@@ -151,7 +151,8 @@ export async function addToWhitelist(serverId: string, name: string): Promise<Wh
 
   const entry: WhitelistEntry = { uuid, name }
   const updated = [...current, entry]
-  await sshService.uploadText(serverId, whitelistPath, JSON.stringify(updated, null, 2))
+  const json = JSON.stringify(updated, null, 2)
+  await sshService.uploadText(serverId, whitelistPath, json)
   return updated
 }
 
@@ -162,7 +163,8 @@ export async function removeFromWhitelist(serverId: string, name: string): Promi
   const whitelistPath = `${serverFilesPath(config.installPath)}/whitelist.json`
   const current = await readWhitelist(serverId)
   const updated = current.filter((e) => e.name.toLowerCase() !== name.toLowerCase())
-  await sshService.uploadText(serverId, whitelistPath, JSON.stringify(updated, null, 2))
+  const json = JSON.stringify(updated, null, 2)
+  await sshService.uploadText(serverId, whitelistPath, json)
   return updated
 }
 
@@ -192,7 +194,8 @@ export async function addOp(serverId: string, name: string): Promise<OpsEntry[]>
   try { uuid = await fetchMojangUuid(name) } catch { uuid = uuidv4() }
 
   const updated = [...current, { uuid, name, level: 4, bypassesPlayerLimit: false }]
-  await sshService.uploadText(serverId, opsPath, JSON.stringify(updated, null, 2))
+  const json = JSON.stringify(updated, null, 2)
+  await sshService.uploadText(serverId, opsPath, json)
   return updated
 }
 
@@ -203,7 +206,8 @@ export async function removeOp(serverId: string, name: string): Promise<OpsEntry
   const opsPath = `${serverFilesPath(config.installPath)}/ops.json`
   const current = await readOps(serverId)
   const updated = current.filter((e) => e.name.toLowerCase() !== name.toLowerCase())
-  await sshService.uploadText(serverId, opsPath, JSON.stringify(updated, null, 2))
+  const json = JSON.stringify(updated, null, 2)
+  await sshService.uploadText(serverId, opsPath, json)
   return updated
 }
 

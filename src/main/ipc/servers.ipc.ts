@@ -33,6 +33,19 @@ export function registerServersHandlers() {
     const updated: ServerConfig = {
       ...existing,
       ...updates,
+      ssh: updates.ssh
+        ? {
+            ...existing.ssh,
+            ...updates.ssh,
+            // Preserve stored credentials if the update omits them (e.g. blank password field)
+            ...(existing.ssh.password && !updates.ssh.password ? { password: existing.ssh.password } : {}),
+            ...(existing.ssh.passphrase && !updates.ssh.passphrase ? { passphrase: existing.ssh.passphrase } : {}),
+          }
+        : existing.ssh,
+      // Preserve token if the update omits it
+      ...('githubToken' in updates && !updates.githubToken && existing.githubToken
+        ? { githubToken: existing.githubToken }
+        : {}),
       id, // don't allow id change
       updatedAt: new Date().toISOString(),
     }
@@ -87,5 +100,6 @@ function redactCredentials(server: ServerConfig): ServerConfig {
   const copy = JSON.parse(JSON.stringify(server)) as ServerConfig
   if (copy.ssh.password) copy.ssh.password = '••••••••'
   if (copy.ssh.passphrase) copy.ssh.passphrase = '••••••••'
+  if (copy.githubToken) copy.githubToken = '••••••••'
   return copy
 }

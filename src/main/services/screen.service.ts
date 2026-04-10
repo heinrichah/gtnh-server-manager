@@ -38,6 +38,10 @@ async function startServer(serverId: string): Promise<void> {
   if (!config) throw new Error(`Server ${serverId} not found`)
 
   const filesPath = serverFilesPath(config.installPath)
+  const mem = config.memoryGb ?? 6
+  const patchMemory = `sed -i -e 's/-Xms[0-9]*[GgMm]/-Xms${mem}G/g' -e 's/-Xmx[0-9]*[GgMm]/-Xmx${mem}G/g' ${filesPath}/startserver-java9.sh`
+  await sshService.executeCommand(serverId, patchMemory)
+
   const result = await sshService.executeCommand(
     serverId,
     `rm -f ${SCREEN_LOG} && cd ${filesPath} && screen -L -Logfile ${SCREEN_LOG} -dmS ${SCREEN_SESSION} ./startserver-java9.sh`
@@ -96,8 +100,16 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+async function sendCommand(serverId: string, text: string): Promise<void> {
+  await sshService.executeCommand(
+    serverId,
+    `screen -S ${SCREEN_SESSION} -X stuff "$(printf '${text.replace(/'/g, "'\\''")}\\r')"`
+  )
+}
+
 export const screenService = {
   getStatus,
   startServer,
   stopServer,
+  sendCommand,
 }

@@ -1,82 +1,69 @@
 import { useEffect, useRef, useState } from 'react'
 import { CheckCircle, XCircle, Loader2, Circle, ChevronDown, ChevronRight, RotateCcw } from 'lucide-react'
-import { installApi, githubApi, serversApi } from '../../ipc/client'
+import { updateApi, githubApi, serversApi } from '../../ipc/client'
 import type { InstallStep, GithubArtifact } from '@shared/types'
 import { cn } from '../../lib/utils'
 import { useServersStore } from '../../store/servers.store'
 
-interface InstallWizardProps {
+interface UpdateWizardProps {
   serverId: string
-  osType: 'ubuntu' | 'debian'
-  isInstalled: boolean
-  hasGithubToken: boolean
   installedVersion?: string
 }
 
 const INITIAL_STEPS: InstallStep[] = [
-  { id: 'apt-update', label: 'Update package lists', status: 'pending' },
-  { id: 'apt-upgrade', label: 'Upgrade packages', status: 'pending' },
-  { id: 'setup-java-repo', label: 'Add Adoptium repository', status: 'pending' },
-  { id: 'install-java', label: 'Install Temurin 21 JRE, unzip & screen', status: 'pending' },
-  { id: 'mkdir', label: 'Clear & create server directory', status: 'pending' },
-  { id: 'download', label: 'Download GTNH server zip', status: 'pending' },
-  { id: 'unzip', label: 'Unzip server files', status: 'pending' },
-  { id: 'chmod', label: 'Set script permissions', status: 'pending' },
+  { id: 'backup', label: 'Back up server files', status: 'pending' },
+  { id: 'clean', label: 'Remove old mod files', status: 'pending' },
+  { id: 'download', label: 'Download new version', status: 'pending' },
+  { id: 'unzip', label: 'Extract archive', status: 'pending' },
+  { id: 'apply', label: 'Apply new files', status: 'pending' },
+  { id: 'restore-journeymap', label: 'Restore JourneyMap config', status: 'pending' },
+  { id: 'chmod', label: 'Set permissions', status: 'pending' },
   { id: 'dropin-mods', label: 'Apply drop-in mods', status: 'pending' },
-  { id: 'eula', label: 'Accept EULA', status: 'pending' },
+  { id: 'cleanup', label: 'Clean up temp files', status: 'pending' },
 ]
 
-const DEFAULT_URL = 'https://downloads.gtnewhorizons.com/ServerPacks/GT_New_Horizons_2.8.1_Server_Java_17-25.zip'
+interface ServerUpdateState { running: boolean; steps: InstallStep[]; done: boolean }
 
-interface ServerInstallState { running: boolean; steps: InstallStep[]; done: boolean }
+const updateStates = new Map<string, ServerUpdateState>()
 
-// Per-server install state — persists across tab navigation and app relaunches
-const installStates = new Map<string, ServerInstallState>()
+function storageKey(serverId: string) { return `gtnh-update-state-${serverId}` }
 
-function storageKey(serverId: string) { return `gtnh-install-state-${serverId}` }
-
-function getInstallState(serverId: string): ServerInstallState {
-  if (!installStates.has(serverId)) {
+function getUpdateState(serverId: string): ServerUpdateState {
+  if (!updateStates.has(serverId)) {
     try {
       const raw = localStorage.getItem(storageKey(serverId))
       if (raw) {
-        const parsed = JSON.parse(raw) as ServerInstallState
-        // If app was closed mid-install, mark as not running
-        installStates.set(serverId, { ...parsed, running: false })
+        const parsed = JSON.parse(raw) as ServerUpdateState
+        updateStates.set(serverId, { ...parsed, running: false })
       } else {
-        installStates.set(serverId, { running: false, steps: INITIAL_STEPS, done: false })
+        updateStates.set(serverId, { running: false, steps: INITIAL_STEPS, done: false })
       }
     } catch {
-      installStates.set(serverId, { running: false, steps: INITIAL_STEPS, done: false })
+      updateStates.set(serverId, { running: false, steps: INITIAL_STEPS, done: false })
     }
   }
-  return installStates.get(serverId)!
+  return updateStates.get(serverId)!
 }
 
-function saveInstallState(serverId: string) {
+function saveUpdateState(serverId: string) {
   try {
-    const state = installStates.get(serverId)
+    const state = updateStates.get(serverId)
     if (!state) return
-    // Strip step output — can be megabytes during downloads; statuses are all that matters on reload
     const slim = { ...state, steps: state.steps.map(({ output: _o, ...s }) => s) }
     localStorage.setItem(storageKey(serverId), JSON.stringify(slim))
   } catch { /* ignore quota errors */ }
 }
 
-// Watchdog: auto-reset if no progress event received for this long
 const WATCHDOG_MS = 90_000
 
-export function InstallWizard({ serverId, osType, isInstalled, hasGithubToken, installedVersion }: InstallWizardProps) {
+export function UpdateWizard({ serverId, installedVersion }: UpdateWizardProps) {
   const { updateServer } = useServersStore()
-  const serverState = getInstallState(serverId)
+  const serverState = getUpdateState(serverId)
 
-  // Initialise from per-server state so navigating away and back restores progress
   const [steps, setStepsState] = useState<InstallStep[]>(serverState.steps)
   const [running, setRunningState] = useState(serverState.running)
   const [done, setDoneState] = useState(serverState.done)
-  const [downloadUrl, setDownloadUrl] = useState(DEFAULT_URL)
-  const [sudoPassword, setSudoPassword] = useState('')
-  const [skipUpdates, setSkipUpdates] = useState(false)
+  const [downloadUrl, setDownloadUrl] = useState('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [artifacts, setArtifacts] = useState<GithubArtifact[] | null>(null)
   const [loadingArtifacts, setLoadingArtifacts] = useState(false)
@@ -107,30 +94,29 @@ export function InstallWizard({ serverId, osType, isInstalled, hasGithubToken, i
 
   const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Wrappers that keep per-server state in sync and persist to localStorage
   function setSteps(s: InstallStep[] | ((prev: InstallStep[]) => InstallStep[])) {
     setStepsState((prev) => {
       const next = typeof s === 'function' ? s(prev) : s
-      getInstallState(serverId).steps = next
-      saveInstallState(serverId)
+      getUpdateState(serverId).steps = next
+      saveUpdateState(serverId)
       return next
     })
   }
   function setRunning(v: boolean) {
-    getInstallState(serverId).running = v
-    saveInstallState(serverId)
+    getUpdateState(serverId).running = v
+    saveUpdateState(serverId)
     setRunningState(v)
   }
   function setDone(v: boolean) {
-    getInstallState(serverId).done = v
-    saveInstallState(serverId)
+    getUpdateState(serverId).done = v
+    saveUpdateState(serverId)
     setDoneState(v)
   }
 
   function resetWatchdog() {
     if (watchdogRef.current) clearTimeout(watchdogRef.current)
     watchdogRef.current = setTimeout(() => {
-      if (installState.running) {
+      if (getUpdateState(serverId).running) {
         setRunning(false)
         setSteps((prev) =>
           prev.map((s) => (s.status === 'running' ? { ...s, status: 'error', output: 'Timed out — no response from server.' } : s))
@@ -146,16 +132,20 @@ export function InstallWizard({ serverId, osType, isInstalled, hasGithubToken, i
     setSteps(INITIAL_STEPS)
   }
 
-  // Re-sync React state when switching to a different server
   useEffect(() => {
-    const s = getInstallState(serverId)
+    const s = getUpdateState(serverId)
     setStepsState(s.steps)
     setRunningState(s.running)
     setDoneState(s.done)
   }, [serverId])
 
   useEffect(() => {
-    const cleanup = installApi.onProgress((step) => {
+    const cleanup = updateApi.onProgress((step) => {
+      if (step.id === '__error__') {
+        setRunning(false)
+        if (watchdogRef.current) clearTimeout(watchdogRef.current)
+        return
+      }
       resetWatchdog()
       setSteps((prev) => {
         const idx = prev.findIndex((s) => s.id === step.id)
@@ -172,12 +162,10 @@ export function InstallWizard({ serverId, osType, isInstalled, hasGithubToken, i
         if (watchdogRef.current) clearTimeout(watchdogRef.current)
       }
 
-      // Detect completion: last step succeeded
       if (step.id === INITIAL_STEPS[INITIAL_STEPS.length - 1].id && step.status === 'success') {
         setRunning(false)
         setDone(true)
         if (watchdogRef.current) clearTimeout(watchdogRef.current)
-        // Refresh server config so installedVersion reflects the new install
         serversApi.list().then((servers) => {
           const updated = servers.find((s) => s.id === serverId)
           if (updated) updateServer(serverId, updated)
@@ -192,12 +180,13 @@ export function InstallWizard({ serverId, osType, isInstalled, hasGithubToken, i
   }, [])
 
   async function handleStart() {
+    if (!downloadUrl.trim()) return
     setSteps(INITIAL_STEPS)
     setRunning(true)
     setDone(false)
     resetWatchdog()
     try {
-      await installApi.start(serverId, downloadUrl, sudoPassword || undefined, skipUpdates, selectedArtifactName)
+      await updateApi.start(serverId, downloadUrl, selectedArtifactName)
     } catch (err) {
       setRunning(false)
       if (watchdogRef.current) clearTimeout(watchdogRef.current)
@@ -213,9 +202,9 @@ export function InstallWizard({ serverId, osType, isInstalled, hasGithubToken, i
   return (
     <div className="p-6 space-y-6 max-w-2xl">
       <div>
-        <h3 className="font-semibold mb-1">Server Installation</h3>
+        <h3 className="font-semibold mb-1">Update Server</h3>
         <p className="text-sm text-muted-foreground">
-          This will install GTNH on the remote server via SSH. Make sure you have sudo access.
+          Downloads a new version and applies it while preserving world data and JourneyMap config. A backup is created automatically.
         </p>
       </div>
 
@@ -233,18 +222,17 @@ export function InstallWizard({ serverId, osType, isInstalled, hasGithubToken, i
             value={downloadUrl}
             onChange={(e) => setDownloadUrl(e.target.value)}
             disabled={running}
+            placeholder="https://downloads.gtnewhorizons.com/… or GitHub artifact URL"
             className="input disabled:opacity-50 flex-1"
           />
-          {hasGithubToken && (
-            <button
-              onClick={loadArtifacts}
-              disabled={running || loadingArtifacts}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-accent disabled:opacity-50 shrink-0"
-            >
-              {loadingArtifacts ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-              Browse artifacts
-            </button>
-          )}
+          <button
+            onClick={loadArtifacts}
+            disabled={running || loadingArtifacts}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-accent disabled:opacity-50 shrink-0"
+          >
+            {loadingArtifacts ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+            Browse artifacts
+          </button>
         </div>
         {artifactError && (
           <p className="text-xs text-red-400 mt-1">{artifactError}</p>
@@ -289,49 +277,7 @@ export function InstallWizard({ serverId, osType, isInstalled, hasGithubToken, i
             )}
           </div>
         )}
-        {!hasGithubToken && (
-          <p className="text-xs text-muted-foreground mt-1">
-            Get the latest server zip URL from{' '}
-            <span className="text-primary">downloads.gtnewhorizons.com</span>
-          </p>
-        )}
       </div>
-
-      <div>
-        <label className="text-xs text-muted-foreground block mb-1">
-          {osType === 'debian' ? 'Root Password' : 'Sudo Password'}{' '}
-          <span className="text-muted-foreground/60">(leave blank if already connected as root)</span>
-        </label>
-        <input
-          type="password"
-          value={sudoPassword}
-          onChange={(e) => setSudoPassword(e.target.value)}
-          disabled={running}
-          placeholder={osType === 'debian' ? 'Root password for su -' : 'Required if SSH user is not root'}
-          className="input disabled:opacity-50"
-        />
-      </div>
-
-      <label className="flex items-center gap-2 cursor-pointer select-none">
-        <input
-          type="checkbox"
-          checked={skipUpdates}
-          onChange={(e) => setSkipUpdates(e.target.checked)}
-          disabled={running}
-          className="rounded"
-        />
-        <span className="text-sm">Skip apt update, upgrade &amp; Java install</span>
-        <span className="text-xs text-muted-foreground">(faster reinstall if dependencies are already installed)</span>
-      </label>
-
-      {isInstalled && !running && (
-        <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-sm">
-          <XCircle className="w-4 h-4 shrink-0 mt-0.5" />
-          <span>
-            <strong>Warning:</strong> Reinstalling will permanently erase all existing server files including worlds, configs, and mods before downloading a fresh copy.
-          </span>
-        </div>
-      )}
 
       {/* Step list */}
       <div className="space-y-2">
@@ -380,32 +326,32 @@ export function InstallWizard({ serverId, osType, isInstalled, hasGithubToken, i
       {done && allSuccess && (
         <div className="flex items-center gap-2 text-green-400 text-sm">
           <CheckCircle className="w-4 h-4" />
-          Installation complete! Go to the Overview tab and click Start.
+          Update complete! Restart the server to apply the new version.
         </div>
       )}
 
       {hasError && (
         <div className="flex items-center gap-2 text-red-400 text-sm">
           <XCircle className="w-4 h-4" />
-          Installation failed. Check the step output above for details.
+          Update failed. Check the step output above for details. Your backup is preserved.
         </div>
       )}
 
       <div className="flex items-center gap-3">
         <button
           onClick={handleStart}
-          disabled={running}
+          disabled={running || !downloadUrl.trim()}
           className="flex items-center gap-2 px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 disabled:opacity-50"
         >
           {running && <Loader2 className="w-4 h-4 animate-spin" />}
-          {running ? 'Installing…' : done ? 'Reinstall' : 'Start Installation'}
+          {running ? 'Updating…' : done ? 'Update Again' : 'Start Update'}
         </button>
 
         {running && (
           <button
             onClick={handleReset}
             className="flex items-center gap-1.5 px-3 py-2 rounded-md border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-accent"
-            title="Force reset if the installation appears stuck"
+            title="Force reset if the update appears stuck"
           >
             <RotateCcw className="w-3.5 h-3.5" />
             Reset

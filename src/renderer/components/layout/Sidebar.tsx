@@ -1,15 +1,17 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Plus, Server, Trash2, Check, X } from 'lucide-react'
+import { Plus, Server, Trash2, Check, X, Pencil } from 'lucide-react'
 import { useServersStore } from '../../store/servers.store'
 import { serversApi } from '../../ipc/client'
 import { ServerForm } from '../servers/ServerForm'
 import { StatusBadge } from '../servers/StatusBadge'
 import { cn } from '../../lib/utils'
+import type { ServerConfig } from '@shared/types'
 
 export function Sidebar() {
-  const { servers, removeServer, addServer, selectServer } = useServersStore()
+  const { servers, removeServer, addServer, updateServer, selectServer } = useServersStore()
   const [showForm, setShowForm] = useState(false)
+  const [editingServer, setEditingServer] = useState<ServerConfig | null>(null)
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const navigate = useNavigate()
   const { id: selectedId } = useParams<{ id: string }>()
@@ -70,12 +72,22 @@ export function Sidebar() {
                   <StatusBadge status={server.lastKnownStatus} size="sm" />
                   <span className="text-sm truncate">{server.displayName}</span>
                 </div>
-                <button
-                  onClick={(e) => { e.stopPropagation(); setPendingDeleteId(server.id) }}
-                  className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all p-0.5 rounded"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                <div className="opacity-0 group-hover:opacity-100 flex items-center transition-all">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setEditingServer(server) }}
+                    className="text-muted-foreground hover:text-foreground p-0.5 rounded"
+                    title="Edit server"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setPendingDeleteId(server.id) }}
+                    className="text-muted-foreground hover:text-destructive p-0.5 rounded"
+                    title="Delete server"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </button>
             )}
           </div>
@@ -103,6 +115,17 @@ export function Sidebar() {
             addServer(server)
             setShowForm(false)
             navigate(`/server/${server.id}`)
+          }}
+        />
+      )}
+
+      {editingServer && (
+        <ServerForm
+          existing={editingServer}
+          onClose={() => setEditingServer(null)}
+          onSave={(server) => {
+            updateServer(server.id, server)
+            setEditingServer(null)
           }}
         />
       )}

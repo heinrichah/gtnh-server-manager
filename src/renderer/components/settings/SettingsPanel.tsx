@@ -3,22 +3,25 @@ import { ConfigBrowser } from './ConfigBrowser'
 import { ServerPropertiesEditor } from './ServerPropertiesEditor'
 import { WhitelistSettings } from './WhitelistSettings'
 import { OpsSettings } from './OpsSettings'
+import { TrackerPanel } from './TrackerPanel'
 import { cn } from '../../lib/utils'
 
 interface SettingsPanelProps {
   serverId: string
   status: string
+  isStopped: boolean
 }
 
 const TABS = [
   { id: 'configs', label: 'Config Files' },
   { id: 'server-properties', label: 'server.properties' },
   { id: 'players', label: 'Players' },
+  { id: 'changes', label: 'Changes' },
 ] as const
 
 type TabId = typeof TABS[number]['id']
 
-export function SettingsPanel({ serverId }: SettingsPanelProps) {
+export function SettingsPanel({ serverId, isStopped }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<TabId>('configs')
 
   return (
@@ -43,8 +46,9 @@ export function SettingsPanel({ serverId }: SettingsPanelProps) {
 
       {/* Content — full remaining height */}
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'configs' && <ConfigBrowser serverId={serverId} />}
-        {activeTab === 'server-properties' && <ServerPropertiesEditor serverId={serverId} />}
+        {activeTab === 'configs' && <ConfigBrowser serverId={serverId} isStopped={isStopped} />}
+        {activeTab === 'server-properties' && <ServerPropertiesEditor serverId={serverId} isStopped={isStopped} />}
+        {activeTab === 'changes' && <div className="overflow-y-auto h-full"><TrackerPanel serverId={serverId} /></div>}
         {activeTab === 'players' && (
           <div className="p-6 space-y-6 overflow-y-auto h-full">
             <WhitelistSettings serverId={serverId} />
